@@ -24,8 +24,7 @@ workflows:
     scripts:
       - name: Check Node version
         script: |
-          node -v
-          npm -v
+          node -v && npm -v
 
       - name: Bypass engine check
         script: |
@@ -62,10 +61,28 @@ workflows:
 
       - name: CocoaPods install
         script: |
-          cd platforms/ios
-          pod install --repo-update
+          cd platforms/ios && pod install --repo-update
 
-      - name: Build iOS .app (device, no signing)
+      - name: Create self-signed identity for building
+        script: |
+          # Allows xcodebuild to produce a complete .app bundle without a real cert
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings build.keychain
+
+          # Generate a temporary self-signed certificate
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/key.pem \
+            -out /tmp/cert.pem -days 1 -nodes \
+            -subj "/CN=iPhone Developer/O=Test/C=US"
+          openssl pkcs12 -export -inkey /tmp/key.pem -in /tmp/cert.pem \
+            -out /tmp/dev.p12 -passout pass:""
+          security import /tmp/dev.p12 -k build.keychain \
+            -P "" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+
+      - name: Build iOS .app (device build, ad-hoc signing)
         script: |
           cd platforms/ios
           xcodebuild \
@@ -74,28 +91,40 @@ workflows:
             -configuration Debug \
             -sdk iphoneos \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             | tee /tmp/xcodebuild.log
 
+          # Verify Info.plist is present before packaging
+          APP=$(find build -name "Moodle.app" -not -name "*.dSYM" | head -1)
+          echo "App path: $APP"
+          ls "$APP/Info.plist" && echo "Info.plist OK" \
+            || (echo "MISSING Info.plist — build incomplete" && exit 1)
+
       - name: Package .app into .ipa
         script: |
-          APP_PATH=$(find platforms/ios/build -name "Moodle.app" \
+          APP=$(find platforms/ios/build -name "Moodle.app" \
             -not -name "*.dSYM" | head -1)
-          echo "Found app: $APP_PATH"
+          echo "Packaging: $APP"
 
-          mkdir -p /tmp/Payload
-          cp -r "$APP_PATH" /tmp/Payload/Moodle.app
-          cd /tmp
-          zip -r Moodle.ipa Payload
-          echo "IPA created at /tmp/Moodle.ipa"
+          rm -rf /tmp/ipawork
+          mkdir -p /tmp/ipawork/Payload
+          cp -r "$APP" /tmp/ipawork/Payload/Moodle.app
+
+          cd /tmp/ipawork
+          zip -r /tmp/Moodle.ipa Payload
+          ls -lh /tmp/Moodle.ipa
 
       - name: Upload IPA to BrowserStack App Live
         script: |
-          curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
+          RESPONSE=$(curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
             -X POST "https://api-cloud.browserstack.com/app-live/upload" \
-            -F "file=@/tmp/Moodle.ipa"
+            -F "file=@/tmp/Moodle.ipa")
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q "app_url" \
+            || (echo "Upload failed" && exit 1)
 
     artifacts:
       - /tmp/Moodle.ipa
