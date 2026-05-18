@@ -25,13 +25,18 @@ workflows:
           node -v
           npm -v
 
+      - name: Bypass engine check
+        script: |
+          echo "engine-strict=false" >> .npmrc
+          cat .npmrc
+
       - name: Install dependencies
         script: |
-          npm ci --ignore-engines
+          npm ci
 
       - name: Build Moodle web app
         script: |
-          npx gulp --ignore-engines || true
+          npx gulp
           npm run build:prod
 
       - name: Capacitor sync iOS
@@ -58,5 +63,5 @@ workflows:
             -F "file=@$APP_PATH"
 
     artifacts:
-      - ios/output/Build/Products/Debug-iphonesimulator/*.app
+      - ios/output/Debug-iphonesimulator/*.app
       - /tmp/xcodebuild_logs/*.log
