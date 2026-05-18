@@ -1,6 +1,6 @@
 workflows:
-  ios-simulator-browserstack:
-    name: Moodle App - Build + BrowserStack
+  ios-browserstack:
+    name: Moodle App - iOS IPA + BrowserStack
     max_build_duration: 90
     instance_type: mac_mini_m2
     environment:
@@ -14,7 +14,7 @@ workflows:
       cache_paths:
         - $HOME/.npm
         - node_modules
-        - $HOME/Library/Caches/CocoaPods   # cache pod downloads
+        - $HOME/Library/Caches/CocoaPods
     triggering:
       events:
         - push
@@ -54,8 +54,6 @@ workflows:
 
       - name: Add iOS platform
         script: |
-          # --noresources avoids LD_RUNPATH_SEARCH_PATHS conflict with CocoaPods
-          # --no-interactive / --confirm prevent prompts hanging the build
           ionic cordova platform remove ios --nosave || true
           ionic cordova platform add ios \
             --confirm \
@@ -64,32 +62,41 @@ workflows:
 
       - name: CocoaPods install
         script: |
-          # Run separately so errors surface clearly instead of hiding in ionic cordova build
           cd platforms/ios
           pod install --repo-update
 
-      - name: Build iOS for simulator (no signing)
+      - name: Build iOS .app (device, no signing)
         script: |
           cd platforms/ios
           xcodebuild \
             -workspace Moodle.xcworkspace \
             -scheme Moodle \
             -configuration Debug \
-            -sdk iphonesimulator \
+            -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
             | tee /tmp/xcodebuild.log
 
-      - name: Locate and upload .app to BrowserStack
+      - name: Package .app into .ipa
         script: |
-          APP_PATH=$(find platforms/ios/build -name "*.app" \
-            -not -name "*.app.dSYM" | head -1)
-          echo "Uploading: $APP_PATH"
+          APP_PATH=$(find platforms/ios/build -name "Moodle.app" \
+            -not -name "*.dSYM" | head -1)
+          echo "Found app: $APP_PATH"
+
+          mkdir -p /tmp/Payload
+          cp -r "$APP_PATH" /tmp/Payload/Moodle.app
+          cd /tmp
+          zip -r Moodle.ipa Payload
+          echo "IPA created at /tmp/Moodle.ipa"
+
+      - name: Upload IPA to BrowserStack App Live
+        script: |
           curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
             -X POST "https://api-cloud.browserstack.com/app-live/upload" \
-            -F "file=@$APP_PATH"
+            -F "file=@/tmp/Moodle.ipa"
 
     artifacts:
-      - platforms/ios/build/**/*.app
+      - /tmp/Moodle.ipa
       - /tmp/xcodebuild.log
