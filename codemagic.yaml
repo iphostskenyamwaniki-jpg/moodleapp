@@ -1,12 +1,12 @@
 workflows:
   ios-simulator-browserstack:
     name: Moodle App - Build + BrowserStack
-    max_build_duration: 60
+    max_build_duration: 90
     instance_type: mac_mini_m2
     environment:
       xcode: latest
       cocoapods: default
-      node: 18.18.2        # Moodle app requires Node 18
+      node: 18.18.2
       vars:
         BROWSERSTACK_USERNAME: "paulmwaniki_cvubBk"
         BROWSERSTACK_ACCESS_TOKEN: "GnDb7oSPmJx1RNDJNy2x"
@@ -14,6 +14,7 @@ workflows:
       cache_paths:
         - $HOME/.npm
         - node_modules
+        - $HOME/Library/Caches/CocoaPods   # cache pod downloads
     triggering:
       events:
         - push
@@ -30,8 +31,6 @@ workflows:
         script: |
           sed -i '' 's/engine-strict=true/engine-strict=false/g' .npmrc || true
           npm config set engine-strict false
-          echo "=== .npmrc contents ==="
-          cat .npmrc
 
       - name: Install dependencies
         script: |
@@ -41,29 +40,51 @@ workflows:
         script: |
           npm install -g @ionic/cli cordova
 
-      - name: Clean stale build artefacts
-        script: |
-          # Official Moodle troubleshooting: delete these before every build
-          rm -rf www platforms plugins .angular
-
       - name: Build cordova-plugin-moodleapp
         script: |
-          # Required before prod:ios per package.json
           npm run prod --prefix cordova-plugin-moodleapp
 
-      - name: Build iOS (ionic cordova — handles gulp + platform add internally)
+      - name: Run gulp (generate www/)
         script: |
-          # Uses the same command as npm run prod:ios in package.json
-          # ionic cordova run ios --prod runs gulp, adds the platform, builds — all in one
-          NODE_ENV=production npx ionic cordova build ios \
-            --prod \
-            --emulator \
-            -- \
-            --buildConfig='{"ios":{"debug":{"codeSignIdentity":"","developmentTeam":"","packageType":"development"}}}'
+          NODE_ENV=production npx gulp
 
-      - name: Upload .app to BrowserStack App Live
+      - name: Clean stale Cordova artefacts
         script: |
-          APP_PATH=$(find platforms/ios/build -name "*.app" -not -name "*.app.dSYM" | head -1)
+          rm -rf platforms plugins .angular
+
+      - name: Add iOS platform
+        script: |
+          # --noresources avoids LD_RUNPATH_SEARCH_PATHS conflict with CocoaPods
+          # --no-interactive / --confirm prevent prompts hanging the build
+          ionic cordova platform remove ios --nosave || true
+          ionic cordova platform add ios \
+            --confirm \
+            --no-interactive \
+            --noresources
+
+      - name: CocoaPods install
+        script: |
+          # Run separately so errors surface clearly instead of hiding in ionic cordova build
+          cd platforms/ios
+          pod install --repo-update
+
+      - name: Build iOS for simulator (no signing)
+        script: |
+          cd platforms/ios
+          xcodebuild \
+            -workspace Moodle.xcworkspace \
+            -scheme Moodle \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee /tmp/xcodebuild.log
+
+      - name: Locate and upload .app to BrowserStack
+        script: |
+          APP_PATH=$(find platforms/ios/build -name "*.app" \
+            -not -name "*.app.dSYM" | head -1)
           echo "Uploading: $APP_PATH"
           curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
             -X POST "https://api-cloud.browserstack.com/app-live/upload" \
@@ -71,4 +92,4 @@ workflows:
 
     artifacts:
       - platforms/ios/build/**/*.app
-      - /tmp/xcodebuild_logs/*.log
+      - /tmp/xcodebuild.log
