@@ -6,6 +6,7 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
+      node: 18.18.2        # Moodle app requires Node 18
       vars:
         BROWSERSTACK_USERNAME: "paulmwaniki_cvubBk"
         BROWSERSTACK_ACCESS_TOKEN: "GnDb7oSPmJx1RNDJNy2x"
@@ -27,7 +28,7 @@ workflows:
 
       - name: Bypass engine check
         script: |
-          sed -i '' 's/engine-strict=true/engine-strict=false/g' .npmrc
+          sed -i '' 's/engine-strict=true/engine-strict=false/g' .npmrc || true
           npm config set engine-strict false
           echo "=== .npmrc contents ==="
           cat .npmrc
@@ -36,27 +37,33 @@ workflows:
         script: |
           npm ci
 
-      - name: Install Cordova
+      - name: Install Ionic + Cordova CLIs
         script: |
-          npm install -g cordova
+          npm install -g @ionic/cli cordova
 
-      - name: Build Moodle web app
+      - name: Clean stale build artefacts
         script: |
-          npx gulp
+          # Official Moodle troubleshooting: delete these before every build
+          rm -rf www platforms plugins .angular
 
-      - name: Add iOS Cordova platform
+      - name: Build cordova-plugin-moodleapp
         script: |
-          cordova platform add ios
+          # Required before prod:ios per package.json
+          npm run prod --prefix cordova-plugin-moodleapp
 
-      - name: Build iOS for simulator (no signing)
+      - name: Build iOS (ionic cordova — handles gulp + platform add internally)
         script: |
-          cordova build ios --emulator --debug \
-            --buildConfig='{"ios":{"debug":{"codeSignIdentity":"","developmentTeam":"","packageType":"development"}}}' \
-            || cordova build ios --emulator --debug
+          # Uses the same command as npm run prod:ios in package.json
+          # ionic cordova run ios --prod runs gulp, adds the platform, builds — all in one
+          NODE_ENV=production npx ionic cordova build ios \
+            --prod \
+            --emulator \
+            -- \
+            --buildConfig='{"ios":{"debug":{"codeSignIdentity":"","developmentTeam":"","packageType":"development"}}}'
 
       - name: Upload .app to BrowserStack App Live
         script: |
-          APP_PATH=$(find platforms/ios/build -name "*.app" | head -1)
+          APP_PATH=$(find platforms/ios/build -name "*.app" -not -name "*.app.dSYM" | head -1)
           echo "Uploading: $APP_PATH"
           curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
             -X POST "https://api-cloud.browserstack.com/app-live/upload" \
