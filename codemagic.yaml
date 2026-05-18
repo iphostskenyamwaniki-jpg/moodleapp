@@ -1,0 +1,58 @@
+workflows:
+  ios-simulator-browserstack:
+    name: Moodle App - Build + BrowserStack
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      node: 18.x
+      xcode: latest
+      cocoapods: default
+      vars:
+        BROWSERSTACK_USERNAME: "paulmwaniki_cvubBk"
+        BROWSERSTACK_ACCESS_TOKEN: "GnDb7oSPmJx1RNDJNy2x"
+    cache:
+      cache_paths:
+        - $HOME/.npm
+        - node_modules
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm ci
+
+      - name: Build Moodle web app
+        script: |
+          npx gulp
+          npm run build:prod
+
+      - name: Capacitor sync iOS
+        script: |
+          npx cap sync ios
+
+      - name: Build for simulator (no signing)
+        script: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -derivedDataPath ios/output \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Upload .app to BrowserStack App Live
+        script: |
+          APP_PATH=$(find ios/output/Build/Products/Debug-iphonesimulator -name "*.app" | head -1)
+          echo "Uploading: $APP_PATH"
+          curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
+            -X POST "https://api-cloud.browserstack.com/app-live/upload" \
+            -F "file=@$APP_PATH"
+
+    artifacts:
+      - ios/output/Build/Products/Debug-iphonesimulator/*.app
+      - /tmp/xcodebuild_logs/*.log
