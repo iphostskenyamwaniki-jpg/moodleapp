@@ -63,45 +63,24 @@ workflows:
         script: |
           cd platforms/ios && pod install --repo-update
 
-      - name: Create self-signed identity for building
-        script: |
-          # Allows xcodebuild to produce a complete .app bundle without a real cert
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings build.keychain
-
-          # Generate a temporary self-signed certificate
-          openssl req -x509 -newkey rsa:2048 -keyout /tmp/key.pem \
-            -out /tmp/cert.pem -days 1 -nodes \
-            -subj "/CN=iPhone Developer/O=Test/C=US"
-          openssl pkcs12 -export -inkey /tmp/key.pem -in /tmp/cert.pem \
-            -out /tmp/dev.p12 -passout pass:""
-          security import /tmp/dev.p12 -k build.keychain \
-            -P "" -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-
-      - name: Build iOS .app (device build, ad-hoc signing)
+      - name: Build iOS .app (simulator — no signing required)
         script: |
           cd platforms/ios
           xcodebuild \
             -workspace Moodle.xcworkspace \
             -scheme Moodle \
             -configuration Debug \
-            -sdk iphoneos \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
             | tee /tmp/xcodebuild.log
 
-          # Verify Info.plist is present before packaging
           APP=$(find build -name "Moodle.app" -not -name "*.dSYM" | head -1)
           echo "App path: $APP"
           ls "$APP/Info.plist" && echo "Info.plist OK" \
             || (echo "MISSING Info.plist — build incomplete" && exit 1)
+          ls -lh "$APP"
 
       - name: Package .app into .ipa
         script: |
