@@ -4,7 +4,6 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
-      node: 20.x
       xcode: latest
       cocoapods: default
       vars:
@@ -21,6 +20,11 @@ workflows:
         - pattern: main
           include: true
     scripts:
+      - name: Check Node version
+        script: |
+          node -v
+          npm -v
+
       - name: Install dependencies
         script: |
           npm ci
