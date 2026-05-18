@@ -76,17 +76,32 @@ workflows:
             ONLY_ACTIVE_ARCH=NO \
             | tee /tmp/xcodebuild.log
 
-          APP=$(find build -name "Moodle.app" -not -name "*.dSYM" | head -1)
-          echo "App path: $APP"
-          ls "$APP/Info.plist" && echo "Info.plist OK" \
-            || (echo "MISSING Info.plist — build incomplete" && exit 1)
-          ls -lh "$APP"
+      - name: Debug — find and inspect .app bundles
+        script: |
+          echo "=== All .app bundles found ==="
+          find platforms/ios/build -name "*.app" -not -name "*.dSYM"
+
+          echo ""
+          echo "=== Top-level contents of each .app ==="
+          find platforms/ios/build -name "*.app" -not -name "*.dSYM" | while read app; do
+            echo "--- $app ---"
+            ls -la "$app" | head -30
+            echo ""
+          done
 
       - name: Package .app into .ipa
         script: |
+          # Find only the top-level Moodle.app, not nested ones inside PlugIns/
           APP=$(find platforms/ios/build -name "Moodle.app" \
-            -not -name "*.dSYM" | head -1)
+            -not -name "*.dSYM" \
+            -not -path "*/PlugIns/*" \
+            -not -path "*/Watch/*" \
+            | head -1)
+
           echo "Packaging: $APP"
+          echo "App size: $(du -sh "$APP")"
+          echo "Info.plist check:"
+          ls -la "$APP/Info.plist" || (echo "MISSING Info.plist" && exit 1)
 
           rm -rf /tmp/ipawork
           mkdir -p /tmp/ipawork/Payload
@@ -95,6 +110,15 @@ workflows:
           cd /tmp/ipawork
           zip -r /tmp/Moodle.ipa Payload
           ls -lh /tmp/Moodle.ipa
+
+          echo ""
+          echo "=== IPA zip listing (first 40 entries) ==="
+          unzip -l /tmp/Moodle.ipa | head -40
+
+          echo ""
+          echo "=== Verifying Info.plist inside IPA ==="
+          unzip -l /tmp/Moodle.ipa | grep -i "info.plist" \
+            || (echo "Info.plist NOT found inside IPA" && exit 1)
 
       - name: Upload IPA to BrowserStack App Live
         script: |
