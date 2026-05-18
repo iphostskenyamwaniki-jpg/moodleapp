@@ -51,24 +51,28 @@ workflows:
         script: |
           rm -rf platforms plugins .angular
 
-      - name: Add iOS platform with full verbose output
+      - name: Enable Cordova integration and add iOS platform
         script: |
-          # Run with --verbose so we see the REAL error inside cordova platform add
-          npx cordova platform add ios --verbose 2>&1 | tee /tmp/cordova-platform-add.log
-          echo "Exit code: ${PIPESTATUS[0]}"
+          # Creates the .cordova folder that cordova project detection requires
+          ionic integrations enable cordova --quiet || true
 
-          # If it failed, print the full log and exit
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "=== FULL CORDOVA LOG ==="
-            cat /tmp/cordova-platform-add.log
-            exit 1
-          fi
+          # Verify config.xml and www/ exist (cordova needs both)
+          echo "=== Project root check ==="
+          ls -la config.xml
+          ls -la www/ | head -5
+
+          # Now add the platform using the local cordova via npx
+          npx ionic cordova platform add ios \
+            --confirm \
+            --no-interactive \
+            --noresources \
+            2>&1 | tee /tmp/platform-add.log
 
       - name: CocoaPods install
         script: |
           cd platforms/ios && pod install --repo-update 2>&1 | tee /tmp/pod-install.log
 
-      - name: Build iOS (xcodebuild)
+      - name: Build iOS (simulator, no signing)
         script: |
           cd platforms/ios
           xcodebuild \
@@ -89,14 +93,14 @@ workflows:
           test -f "$APP/Info.plist" && echo "Info.plist: OK" \
             || (echo "MISSING Info.plist" && exit 1)
           test -f "$APP/Moodle" && echo "Binary: OK" \
-            || (echo "MISSING binary" && exit 1)
+            || (echo "MISSING Moodle binary" && exit 1)
 
       - name: Package .app into .ipa
         script: |
           APP=$(find platforms/ios/build -name "Moodle.app" \
             -not -name "*.dSYM" \
             -not -path "*/PlugIns/*" | head -1)
-          echo "Packaging: $APP"
+          echo "Packaging: $APP ($(du -sh "$APP" | cut -f1))"
 
           rm -rf /tmp/ipawork
           mkdir -p /tmp/ipawork/Payload
@@ -118,6 +122,6 @@ workflows:
 
     artifacts:
       - /tmp/Moodle.ipa
-      - /tmp/cordova-platform-add.log
+      - /tmp/platform-add.log
       - /tmp/pod-install.log
       - /tmp/xcodebuild.log
