@@ -20,22 +20,35 @@ workflows:
         - pattern: main
           include: true
     scripts:
-      - name: Check Node version
+      - name: Install correct Node version (22.x)
         script: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm install 22.17
+          nvm use 22.17
           node -v
           npm -v
 
       - name: Install dependencies
         script: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm use 22.17
           npm ci
 
       - name: Build Moodle web app
         script: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm use 22.17
           npx gulp
           npm run build:prod
 
       - name: Capacitor sync iOS
         script: |
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm use 22.17
           npx cap sync ios
 
       - name: Build for simulator (no signing)
