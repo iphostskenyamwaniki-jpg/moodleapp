@@ -27,7 +27,11 @@ workflows:
 
       - name: Bypass engine check
         script: |
-          echo "engine-strict=false" >> .npmrc
+          # Replace engine-strict=true with false in existing .npmrc
+          sed -i '' 's/engine-strict=true/engine-strict=false/g' .npmrc
+          # Also set it via npm config globally just in case
+          npm config set engine-strict false
+          echo "=== .npmrc contents ==="
           cat .npmrc
 
       - name: Install dependencies
@@ -63,5 +67,5 @@ workflows:
             -F "file=@$APP_PATH"
 
     artifacts:
-      - ios/output/Debug-iphonesimulator/*.app
+      - ios/output/Build/Products/Debug-iphonesimulator/*.app
       - /tmp/xcodebuild_logs/*.log
