@@ -27,9 +27,7 @@ workflows:
 
       - name: Bypass engine check
         script: |
-          # Replace engine-strict=true with false in existing .npmrc
           sed -i '' 's/engine-strict=true/engine-strict=false/g' .npmrc
-          # Also set it via npm config globally just in case
           npm config set engine-strict false
           echo "=== .npmrc contents ==="
           cat .npmrc
@@ -38,34 +36,32 @@ workflows:
         script: |
           npm ci
 
+      - name: Install Cordova
+        script: |
+          npm install -g cordova
+
       - name: Build Moodle web app
         script: |
           npx gulp
-          npm run build:prod
 
-      - name: Capacitor sync iOS
+      - name: Add iOS Cordova platform
         script: |
-          npx cap sync ios
+          cordova platform add ios
 
-      - name: Build for simulator (no signing)
+      - name: Build iOS for simulator (no signing)
         script: |
-          xcodebuild \
-            -workspace ios/App/App.xcworkspace \
-            -scheme App \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            -derivedDataPath ios/output \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          cordova build ios --emulator --debug \
+            --buildConfig='{"ios":{"debug":{"codeSignIdentity":"","developmentTeam":"","packageType":"development"}}}' \
+            || cordova build ios --emulator --debug
 
       - name: Upload .app to BrowserStack App Live
         script: |
-          APP_PATH=$(find ios/output/Build/Products/Debug-iphonesimulator -name "*.app" | head -1)
+          APP_PATH=$(find platforms/ios/build -name "*.app" | head -1)
           echo "Uploading: $APP_PATH"
           curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_TOKEN" \
             -X POST "https://api-cloud.browserstack.com/app-live/upload" \
             -F "file=@$APP_PATH"
 
     artifacts:
-      - ios/output/Build/Products/Debug-iphonesimulator/*.app
+      - platforms/ios/build/**/*.app
       - /tmp/xcodebuild_logs/*.log
