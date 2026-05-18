@@ -1,7 +1,7 @@
 workflows:
   ios-browserstack:
     name: Moodle App - iOS IPA + BrowserStack
-    max_build_duration: 90
+    max_build_duration: 120
     instance_type: mac_mini_m2
     environment:
       xcode: latest
@@ -43,65 +43,43 @@ workflows:
         script: |
           npm run prod --prefix cordova-plugin-moodleapp
 
-      - name: Run gulp (generate www/)
-        script: |
-          NODE_ENV=production npx gulp
-
       - name: Clean stale Cordova artefacts
         script: |
-          rm -rf platforms plugins .angular
+          rm -rf platforms plugins .angular www
 
-      - name: Add iOS platform
+      - name: Full iOS build (Angular + Cordova + xcodebuild)
         script: |
-          ionic cordova platform remove ios --nosave || true
-          ionic cordova platform add ios \
-            --confirm \
-            --no-interactive \
-            --noresources
+          # This single command does everything:
+          # 1. Runs gulp to generate www/
+          # 2. Runs Angular prod build
+          # 3. Adds iOS platform if needed
+          # 4. Runs pod install
+          # 5. Compiles the native Xcode project
+          NODE_ENV=production npx ionic cordova build ios \
+            --prod \
+            --emulator \
+            --verbose \
+            2>&1 | tee /tmp/ionic-build.log
 
-      - name: CocoaPods install
-        script: |
-          cd platforms/ios && pod install --repo-update
-
-      - name: Build iOS .app (simulator — no signing required)
-        script: |
-          cd platforms/ios
-          xcodebuild \
-            -workspace Moodle.xcworkspace \
-            -scheme Moodle \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build \
-            ONLY_ACTIVE_ARCH=NO \
-            | tee /tmp/xcodebuild.log
-
-      - name: Debug — find and inspect .app bundles
-        script: |
-          echo "=== All .app bundles found ==="
-          find platforms/ios/build -name "*.app" -not -name "*.dSYM"
-
-          echo ""
-          echo "=== Top-level contents of each .app ==="
-          find platforms/ios/build -name "*.app" -not -name "*.dSYM" | while read app; do
-            echo "--- $app ---"
-            ls -la "$app" | head -30
-            echo ""
-          done
+          # Verify the binary exists (not just web assets)
+          APP=$(find platforms/ios/build -name "Moodle.app" \
+            -not -name "*.dSYM" \
+            -not -path "*/PlugIns/*" | head -1)
+          echo "App: $APP"
+          echo "Contents:"
+          ls "$APP/"
+          test -f "$APP/Info.plist" \
+            || (echo "MISSING Info.plist — native compile failed" && exit 1)
+          test -f "$APP/Moodle" \
+            || (echo "MISSING Moodle binary — native compile failed" && exit 1)
+          echo "Binary size: $(du -sh "$APP/Moodle")"
 
       - name: Package .app into .ipa
         script: |
-          # Find only the top-level Moodle.app, not nested ones inside PlugIns/
           APP=$(find platforms/ios/build -name "Moodle.app" \
             -not -name "*.dSYM" \
-            -not -path "*/PlugIns/*" \
-            -not -path "*/Watch/*" \
-            | head -1)
-
-          echo "Packaging: $APP"
-          echo "App size: $(du -sh "$APP")"
-          echo "Info.plist check:"
-          ls -la "$APP/Info.plist" || (echo "MISSING Info.plist" && exit 1)
+            -not -path "*/PlugIns/*" | head -1)
+          echo "Packaging: $APP ($(du -sh "$APP" | cut -f1))"
 
           rm -rf /tmp/ipawork
           mkdir -p /tmp/ipawork/Payload
@@ -110,15 +88,6 @@ workflows:
           cd /tmp/ipawork
           zip -r /tmp/Moodle.ipa Payload
           ls -lh /tmp/Moodle.ipa
-
-          echo ""
-          echo "=== IPA zip listing (first 40 entries) ==="
-          unzip -l /tmp/Moodle.ipa | head -40
-
-          echo ""
-          echo "=== Verifying Info.plist inside IPA ==="
-          unzip -l /tmp/Moodle.ipa | grep -i "info.plist" \
-            || (echo "Info.plist NOT found inside IPA" && exit 1)
 
       - name: Upload IPA to BrowserStack App Live
         script: |
@@ -131,4 +100,4 @@ workflows:
 
     artifacts:
       - /tmp/Moodle.ipa
-      - /tmp/xcodebuild.log
+      - /tmp/ionic-build.log
