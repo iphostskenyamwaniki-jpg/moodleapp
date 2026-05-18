@@ -43,43 +43,60 @@ workflows:
         script: |
           npm run prod --prefix cordova-plugin-moodleapp
 
+      - name: Run gulp (generate www/)
+        script: |
+          NODE_ENV=production npx gulp
+
       - name: Clean stale Cordova artefacts
         script: |
-          rm -rf platforms plugins .angular www
+          rm -rf platforms plugins .angular
 
-      - name: Full iOS build (Angular + Cordova + xcodebuild)
+      - name: Add iOS platform with full verbose output
         script: |
-          # This single command does everything:
-          # 1. Runs gulp to generate www/
-          # 2. Runs Angular prod build
-          # 3. Adds iOS platform if needed
-          # 4. Runs pod install
-          # 5. Compiles the native Xcode project
-          NODE_ENV=production npx ionic cordova build ios \
-            --prod \
-            --emulator \
-            --verbose \
-            2>&1 | tee /tmp/ionic-build.log
+          # Run with --verbose so we see the REAL error inside cordova platform add
+          npx cordova platform add ios --verbose 2>&1 | tee /tmp/cordova-platform-add.log
+          echo "Exit code: ${PIPESTATUS[0]}"
 
-          # Verify the binary exists (not just web assets)
-          APP=$(find platforms/ios/build -name "Moodle.app" \
+          # If it failed, print the full log and exit
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "=== FULL CORDOVA LOG ==="
+            cat /tmp/cordova-platform-add.log
+            exit 1
+          fi
+
+      - name: CocoaPods install
+        script: |
+          cd platforms/ios && pod install --repo-update 2>&1 | tee /tmp/pod-install.log
+
+      - name: Build iOS (xcodebuild)
+        script: |
+          cd platforms/ios
+          xcodebuild \
+            -workspace Moodle.xcworkspace \
+            -scheme Moodle \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee /tmp/xcodebuild.log
+
+          APP=$(find build -name "Moodle.app" \
             -not -name "*.dSYM" \
             -not -path "*/PlugIns/*" | head -1)
           echo "App: $APP"
-          echo "Contents:"
           ls "$APP/"
-          test -f "$APP/Info.plist" \
-            || (echo "MISSING Info.plist — native compile failed" && exit 1)
-          test -f "$APP/Moodle" \
-            || (echo "MISSING Moodle binary — native compile failed" && exit 1)
-          echo "Binary size: $(du -sh "$APP/Moodle")"
+          test -f "$APP/Info.plist" && echo "Info.plist: OK" \
+            || (echo "MISSING Info.plist" && exit 1)
+          test -f "$APP/Moodle" && echo "Binary: OK" \
+            || (echo "MISSING binary" && exit 1)
 
       - name: Package .app into .ipa
         script: |
           APP=$(find platforms/ios/build -name "Moodle.app" \
             -not -name "*.dSYM" \
             -not -path "*/PlugIns/*" | head -1)
-          echo "Packaging: $APP ($(du -sh "$APP" | cut -f1))"
+          echo "Packaging: $APP"
 
           rm -rf /tmp/ipawork
           mkdir -p /tmp/ipawork/Payload
@@ -88,6 +105,7 @@ workflows:
           cd /tmp/ipawork
           zip -r /tmp/Moodle.ipa Payload
           ls -lh /tmp/Moodle.ipa
+          unzip -l /tmp/Moodle.ipa | grep "Info.plist"
 
       - name: Upload IPA to BrowserStack App Live
         script: |
@@ -100,4 +118,6 @@ workflows:
 
     artifacts:
       - /tmp/Moodle.ipa
-      - /tmp/ionic-build.log
+      - /tmp/cordova-platform-add.log
+      - /tmp/pod-install.log
+      - /tmp/xcodebuild.log
