@@ -4,7 +4,7 @@ workflows:
     max_build_duration: 120
     instance_type: mac_mini_m2
     environment:
-      xcode: latest
+      xcode: 16.3
       cocoapods: default
       node: 18.18.2
       vars:
@@ -25,6 +25,7 @@ workflows:
       - name: Check Node version
         script: |
           node -v && npm -v
+          xcodebuild -version
 
       - name: Bypass engine check
         script: |
@@ -53,20 +54,35 @@ workflows:
 
       - name: Enable Cordova integration and add iOS platform
         script: |
-          # Creates the .cordova folder that cordova project detection requires
           ionic integrations enable cordova --quiet || true
-
-          # Verify config.xml and www/ exist (cordova needs both)
-          echo "=== Project root check ==="
-          ls -la config.xml
-          ls -la www/ | head -5
-
-          # Now add the platform using the local cordova via npx
           npx ionic cordova platform add ios \
             --confirm \
             --no-interactive \
             --noresources \
             2>&1 | tee /tmp/platform-add.log
+
+      - name: Patch Podfile — raise all pod targets to iOS 15
+        script: |
+          PODFILE="platforms/ios/Podfile"
+          echo "=== Original tail of Podfile ==="
+          tail -10 "$PODFILE"
+
+          # Append post_install hook to bump any pod target below iOS 15
+          cat >> "$PODFILE" << 'EOF'
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+      if current && current.to_f < 15.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      end
+    end
+  end
+end
+EOF
+          echo "=== Patched tail of Podfile ==="
+          tail -20 "$PODFILE"
 
       - name: CocoaPods install
         script: |
@@ -83,6 +99,7 @@ workflows:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
             ONLY_ACTIVE_ARCH=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
             2>&1 | tee /tmp/xcodebuild.log
 
           APP=$(find build -name "Moodle.app" \
@@ -94,6 +111,7 @@ workflows:
             || (echo "MISSING Info.plist" && exit 1)
           test -f "$APP/Moodle" && echo "Binary: OK" \
             || (echo "MISSING Moodle binary" && exit 1)
+          du -sh "$APP"
 
       - name: Package .app into .ipa
         script: |
