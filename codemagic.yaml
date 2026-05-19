@@ -63,26 +63,24 @@ workflows:
 
       - name: Patch Podfile — raise all pod targets to iOS 15
         script: |
-          PODFILE="platforms/ios/Podfile"
-          echo "=== Original tail of Podfile ==="
-          tail -10 "$PODFILE"
-
-          # Append post_install hook to bump any pod target below iOS 15
-          cat >> "$PODFILE" << 'EOF'
-
-post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-      if current && current.to_f < 15.0
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      end
-    end
-  end
-end
-EOF
-          echo "=== Patched tail of Podfile ==="
-          tail -20 "$PODFILE"
+          python3 -c "
+          patch = '''
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+                if current && current.to_f < 15.0
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+                end
+              end
+            end
+          end
+          '''
+          with open('platforms/ios/Podfile', 'a') as f:
+              f.write(patch)
+          print('Podfile patched successfully')
+          "
+          tail -20 platforms/ios/Podfile
 
       - name: CocoaPods install
         script: |
